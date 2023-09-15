@@ -1,0 +1,396 @@
+#!/bin/sh /etc/rc.common
+START=99
+STARTUP_ENABLED=1 # 这一行表示默认启用开机启动
+# 定义iptables的路径
+IPTABLES=/usr/sbin/iptables
+# 定义规则内容
+RULE="-i zt+ -p tcp,udp -m multiport --dports 1:65535 -j REDIRECT --to-ports 1234 -m comment --comment 'Redirect zt+ traffic to local port 1234'"
+stop() {
+  # 检查规则是否存在
+  $IPTABLES -t nat -C PREROUTING $RULE >/dev/null 2>&1
+  # 如果存在，就删除之前添加的规则
+  if [ $? -eq 0 ]; then
+    $IPTABLES -t nat -D PREROUTING $RULE
+    # 检查删除结果
+    if [ $? -ne 0 ]; then
+      echo "Failed to delete rule"
+      exit 1
+    fi
+  fi
+}
+start() {
+  # 检查规则是否存在
+  $IPTABLES -t nat -C PREROUTING $RULE >/dev/null 2>&1
+  # 如果不存在，就添加规则，将zt开头的网卡的流量重定向到1234端口
+  if [ $? -ne 0 ]; then
+    $IPTABLES -t nat -A PREROUTING $RULE
+    # 检查添加结果
+    if [ $? -ne 0 ]; then
+      echo "Failed to add rule"
+      exit 1
+    fi
+  fi
+}
+
+
+可是我这样设置后，ssrplus设置全局代理。用A机器tcping去ping另一台已经加入zerotier网络的主机B机器，响应延迟ms数和没加这个启动添加iptables重定向脚本的基本一样30ms左右。按道理走了ssrplus代理（日本服务器C），tcping应该在50ms以上，起码有变化（和之前不一样）对不对。是不是没生效哦，还是什么原因
+
+
+以下是iptables的规则：
+
+
+
+~# iptables -t nat -L -v -n
+Chain PREROUTING (policy ACCEPT 19619 packets, 1135K bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+ 2326  125K SS_SPEC_WAN_AC  tcp  --  br-lan *       0.0.0.0/0            0.0.0.0/0            /* _SS_SPEC_RULE_ */
+  921 57790 REDIRECT   udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:53 redir ports 53
+    0     0 REDIRECT   tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:53 redir ports 53
+21844 1268K prerouting_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom prerouting rule chain */
+ 1897  115K zone_lan_prerouting  all  --  br-lan *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+ 7580  401K zone_wan_prerouting  all  --  pppoe-wan *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+    0     0 zone_VPN_prerouting  all  --  ipsec0 *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain INPUT (policy ACCEPT 19408 packets, 1123K bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain OUTPUT (policy ACCEPT 42768 packets, 3831K bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+15133 1016K SS_SPEC_WAN_AC  tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* _SS_SPEC_RULE_ */
+
+Chain POSTROUTING (policy ACCEPT 18617 packets, 1733K bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+12519  751K MASQUERADE  all  --  *      *       192.168.192.0/24     0.0.0.0/0           
+    0     0 MASQUERADE  all  --  *      ztuzesf2h7  0.0.0.0/0            0.0.0.0/0           
+41933 4029K postrouting_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom postrouting rule chain */
+ 6852  944K zone_lan_postrouting  all  --  *      br-lan  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+13601 1127K zone_wan_postrouting  all  --  *      pppoe-wan  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+    0     0 zone_VPN_postrouting  all  --  *      ipsec0  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain SS_SPEC_WAN_AC (2 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 1780 96912 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0            match-set whitelist dst
+ 1710  105K SS_SPEC_WAN_FW  all  --  *      *       0.0.0.0/0            0.0.0.0/0            match-set blacklist dst
+    0     0 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0            match-set bplan src
+    0     0 SS_SPEC_WAN_FW  all  --  *      *       0.0.0.0/0            0.0.0.0/0            match-set fplan src
+    1    60 RETURN     tcp  --  *      *       0.0.0.0/0            152.69.205.153       tcp dpt:!53
+13968  939K SS_SPEC_WAN_FW  all  --  *      *       0.0.0.0/0            0.0.0.0/0           
+
+Chain SS_SPEC_WAN_FW (3 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/8           
+    1    64 RETURN     all  --  *      *       0.0.0.0/0            10.0.0.0/8          
+  950 57000 RETURN     all  --  *      *       0.0.0.0/0            127.0.0.0/8         
+    0     0 RETURN     all  --  *      *       0.0.0.0/0            169.254.0.0/16      
+    0     0 RETURN     all  --  *      *       0.0.0.0/0            172.16.0.0/12       
+11207  672K RETURN     all  --  *      *       0.0.0.0/0            192.168.0.0/16      
+    0     0 RETURN     all  --  *      *       0.0.0.0/0            224.0.0.0/4         
+    0     0 RETURN     all  --  *      *       0.0.0.0/0            240.0.0.0/4         
+ 3520  315K REDIRECT   tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            redir ports 1234
+
+Chain postrouting_VPN_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain postrouting_lan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain postrouting_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain postrouting_wan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain prerouting_VPN_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain prerouting_lan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain prerouting_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain prerouting_wan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain zone_VPN_postrouting (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 postrouting_VPN_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom VPN postrouting rule chain */
+
+Chain zone_VPN_prerouting (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 prerouting_VPN_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom VPN prerouting rule chain */
+
+Chain zone_lan_postrouting (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 6852  944K postrouting_lan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom lan postrouting rule chain */
+ 6852  944K MASQUERADE  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_lan_prerouting (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 1897  115K prerouting_lan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom lan prerouting rule chain */
+
+Chain zone_wan_postrouting (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+13601 1127K postrouting_wan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom wan postrouting rule chain */
+13601 1127K MASQUERADE  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_wan_prerouting (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 7580  401K prerouting_wan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom wan prerouting rule chain */
+ 
+ 
+ 
+ 
+ ~# iptables -t filter -L -v -n
+Chain INPUT (policy ACCEPT 13214 packets, 799K bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+ 923K  832M SSR-SERVER-RULE  all  --  *      *       0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            policy match dir in pol ipsec proto 50
+ 257K  384M ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+ 662K  503M input_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom input rule chain */
+ 640K  502M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED /* !fw3 */
+ 1957  116K zone_lan_input  all  --  br-lan *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+ 7067  330K zone_wan_input  all  --  pppoe-wan *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+    0     0 zone_VPN_input  all  --  ipsec0 *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain FORWARD (policy ACCEPT 0 packets, 0 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 ACCEPT     all  --  *      ztuzesf2h7  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     all  --  ztuzesf2h7 *       0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            policy match dir out pol ipsec proto 50
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            policy match dir in pol ipsec proto 50
+37279 4543K forwarding_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom forwarding rule chain */
+35275 4420K ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED /* !fw3 */
+ 2004  123K zone_lan_forward  all  --  br-lan *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+    0     0 zone_wan_forward  all  --  pppoe-wan *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+    0     0 zone_VPN_forward  all  --  ipsec0 *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain OUTPUT (policy ACCEPT 18143 packets, 1656K bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            policy match dir out pol ipsec proto 50
+ 165K  336M ACCEPT     all  --  *      lo      0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+ 779K  572M output_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom output rule chain */
+ 728K  568M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED /* !fw3 */
+ 8127 1111K zone_lan_output  all  --  *      br-lan  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+21325 1763K zone_wan_output  all  --  *      pppoe-wan  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+    0     0 zone_VPN_output  all  --  *      ipsec0  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain SSR-SERVER-RULE (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+49212   40M ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10036
+    2   380 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10036
+    0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10014
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10014
+    7   355 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10018
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10018
+22680 3370K ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10043
+  149  145K ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10043
+62053 5865K ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10049
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10049
+  119 18338 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10037
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10037
+    0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10021
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10021
+    7   355 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10000
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10000
+    0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10048
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10048
+   29  1780 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:10001
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:10001
+
+Chain forwarding_VPN_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain forwarding_lan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain forwarding_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain forwarding_wan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain input_VPN_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain input_lan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain input_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain input_wan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain output_VPN_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain output_lan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain output_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain output_wan_rule (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain reject (0 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 REJECT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */ reject-with tcp-reset
+    0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */ reject-with icmp-port-unreachable
+
+Chain zone_VPN_dest_ACCEPT (2 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 ACCEPT     all  --  *      ipsec0  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_VPN_forward (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 forwarding_VPN_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom VPN forwarding rule chain */
+    0     0 zone_wan_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Zone VPN to wan forwarding policy */
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate DNAT /* !fw3: Accept port forwards */
+    0     0 zone_VPN_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_VPN_input (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 input_VPN_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom VPN input rule chain */
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate DNAT /* !fw3: Accept port redirections */
+    0     0 zone_VPN_src_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_VPN_output (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 output_VPN_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom VPN output rule chain */
+    0     0 zone_VPN_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_VPN_src_ACCEPT (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 ACCEPT     all  --  ipsec0 *       0.0.0.0/0            0.0.0.0/0            ctstate NEW,UNTRACKED /* !fw3 */
+
+Chain zone_lan_dest_ACCEPT (4 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 DROP       all  --  *      br-lan  0.0.0.0/0            0.0.0.0/0            ctstate INVALID /* !fw3: Prevent NAT leakage */
+ 8127 1111K ACCEPT     all  --  *      br-lan  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_lan_forward (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 2004  123K forwarding_lan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom lan forwarding rule chain */
+ 2004  123K zone_wan_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Zone lan to wan forwarding policy */
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate DNAT /* !fw3: Accept port forwards */
+    0     0 zone_lan_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_lan_input (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 1957  116K input_lan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom lan input rule chain */
+  846 45662 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate DNAT /* !fw3: Accept port redirections */
+ 1111 70394 zone_lan_src_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_lan_output (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 8127 1111K output_lan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom lan output rule chain */
+ 8127 1111K zone_lan_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_lan_src_ACCEPT (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 1111 70394 ACCEPT     all  --  br-lan *       0.0.0.0/0            0.0.0.0/0            ctstate NEW,UNTRACKED /* !fw3 */
+
+Chain zone_wan_dest_ACCEPT (4 references)
+ pkts bytes target     prot opt in     out     source               destination         
+   58  3013 DROP       all  --  *      pppoe-wan  0.0.0.0/0            0.0.0.0/0            ctstate INVALID /* !fw3: Prevent NAT leakage */
+23271 1883K ACCEPT     all  --  *      pppoe-wan  0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_wan_forward (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 forwarding_wan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom wan forwarding rule chain */
+    0     0 zone_lan_dest_ACCEPT  esp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Allow-IPSec-ESP */
+    0     0 zone_lan_dest_ACCEPT  udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:500 /* !fw3: Allow-ISAKMP */
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate DNAT /* !fw3: Accept port forwards */
+    0     0 zone_wan_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_wan_input (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 7067  330K input_wan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom wan input rule chain */
+    0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:68 /* !fw3: Allow-DHCP-Renew */
+  189 15490 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8 /* !fw3: Allow-Ping */
+    0     0 ACCEPT     2    --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Allow-IGMP */
+    1   232 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:500 /* !fw3: ike */
+    1    57 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:4500 /* !fw3: ipsec */
+    0     0 ACCEPT     ah   --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: ah */
+    0     0 ACCEPT     esp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: esp */
+    0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate DNAT /* !fw3: Accept port redirections */
+ 6876  314K zone_wan_src_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_wan_output (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+21325 1763K output_wan_rule  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Custom wan output rule chain */
+21325 1763K zone_wan_dest_ACCEPT  all  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3 */
+
+Chain zone_wan_src_ACCEPT (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+ 5285  250K ACCEPT     all  --  pppoe-wan *       0.0.0.0/0            0.0.0.0/0            ctstate NEW,UNTRACKED /* !fw3 */
+ 
+ 
+ ~# iptables -t mangle -L -v -n
+Chain PREROUTING (policy ACCEPT 955K packets, 834M bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+31500 2467K SS_SPEC_TPROXY  udp  --  br-lan *       0.0.0.0/0            0.0.0.0/0            /* _SS_SPEC_RULE_ */
+
+Chain INPUT (policy ACCEPT 925K packets, 832M bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain FORWARD (policy ACCEPT 29731 packets, 2402K bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+ 1858 97852 TCPMSS     tcp  --  *      br-lan  0.0.0.0/0            0.0.0.0/0            tcp flags:0x06/0x02 /* !fw3: Zone lan MTU fixing */ TCPMSS clamp to PMTU
+ 1862 99472 TCPMSS     tcp  --  br-lan *       0.0.0.0/0            0.0.0.0/0            tcp flags:0x06/0x02 /* !fw3: Zone lan MTU fixing */ TCPMSS clamp to PMTU
+ 1862 99472 TCPMSS     tcp  --  *      pppoe-wan  0.0.0.0/0            0.0.0.0/0            tcp flags:0x06/0x02 /* !fw3: Zone wan MTU fixing */ TCPMSS clamp to PMTU
+ 1858 97852 TCPMSS     tcp  --  pppoe-wan *       0.0.0.0/0            0.0.0.0/0            tcp flags:0x06/0x02 /* !fw3: Zone wan MTU fixing */ TCPMSS clamp to PMTU
+
+Chain OUTPUT (policy ACCEPT 858K packets, 818M bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain POSTROUTING (policy ACCEPT 888K packets, 820M bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain SS_SPEC_TPROXY (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+  850 52847 RETURN     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:53
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            0.0.0.0/8           
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            10.0.0.0/8          
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            127.0.0.0/8         
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            169.254.0.0/16      
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            172.16.0.0/12       
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            192.168.0.0/16      
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            224.0.0.0/4         
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            240.0.0.0/4         
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            152.69.205.153       udp dpt:!53
+    0     0 RETURN     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            match-set bplan src
+    0     0 TPROXY     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            match-set fplan src TPROXY redirect 0.0.0.0:1234 mark 0x1/0x1
+30650 2414K TPROXY     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            TPROXY redirect 0.0.0.0:1234 mark 0x1/0x1
+
+
+~# iptables -t raw -L -v -n
+Chain PREROUTING (policy ACCEPT 1137K packets, 946M bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 zone_VPN_helper  all  --  ipsec0 *       0.0.0.0/0            0.0.0.0/0            /* !fw3: VPN CT helper assignment */
+
+Chain OUTPUT (policy ACCEPT 948K packets, 910M bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain zone_VPN_helper (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 CT         udp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Amanda backup and archiving proto */ udp dpt:10080 CT helper amanda
+    0     0 CT         tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: FTP passive connection tracking */ tcp dpt:21 CT helper ftp
+    0     0 CT         udp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: RAS proto tracking */ udp dpt:1719 CT helper RAS
+    0     0 CT         tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: Q.931 proto tracking */ tcp dpt:1720 CT helper Q.931
+    0     0 CT         tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: IRC DCC connection tracking */ tcp dpt:6667 CT helper irc
+    0     0 CT         tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: PPTP VPN connection tracking */ tcp dpt:1723 CT helper pptp
+    0     0 CT         tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: SIP VoIP connection tracking */ tcp dpt:5060 CT helper sip
+    0     0 CT         udp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: SIP VoIP connection tracking */ udp dpt:5060 CT helper sip
+    0     0 CT         udp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: SNMP monitoring connection tracking */ udp dpt:161 CT helper snmp
+    0     0 CT         udp  --  *      *       0.0.0.0/0            0.0.0.0/0            /* !fw3: TFTP connection tracking */ udp dpt:69 CT helper t
+    
+    
+    
+   bing，请帮我分析一下是哪里出了问题
+ 
+ 
+ 
+ 
